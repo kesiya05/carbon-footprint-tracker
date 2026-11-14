@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Carbon Footprint Tracker</title>
+<style>
+body{font:16px/1.5 system-ui,sans-serif;max-width:900px;margin:0 auto;padding:1rem;color:#1b1b19;background:#f6f5f1}
+h1{font-size:1.4rem} h2{font-size:1.05rem;margin-top:1.6rem}
+.card{background:#fff;border:1px solid #ddd;padding:1rem;margin-bottom:1rem}
+form{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:.5rem}
+input,select,button{font:inherit;padding:.4rem}button{background:#1f4e4a;color:#fff;border:0;cursor:pointer}
+table{border-collapse:collapse;width:100%;font-size:.9rem}td,th{border-bottom:1px solid #eee;padding:.3rem;text-align:left}
+.bar{height:16px;background:#1f4e4a} .over{color:#a33} .watch{color:#a60}
+</style></head><body>
+<h1>Carbon Footprint Tracker</h1>
+<p>Log electricity, gas, fuel, food and waste per branch and see where the emissions come from.
+Factors are rounded approximations until you replace them.</p>
+<div class="card"><h2>Add an entry</h2>
+<form id="f"><input name="day" type="date" required><input name="branch" placeholder="Branch" required>
+<select name="category" id="cat"></select><input name="quantity" type="number" step="any" min="0" placeholder="Quantity" required>
+<button>Add</button></form><div id="msg"></div></div>
+<div class="card"><h2>By category</h2><div id="cats"></div></div>
+<div class="card"><h2>By month (kg CO2e)</h2><svg id="trend" viewBox="0 0 600 160" width="100%"></svg></div>
+<div class="card"><h2>Goals this month</h2><div id="goals"></div></div>
+<div class="card"><h2>Latest entries</h2><table id="rows"></table></div>
+<script>
+const $=s=>document.querySelector(s);
+async function api(p,o){const r=await fetch(p,o);if(!r.ok)throw new Error((await r.json()).detail?.[0]?.msg||'Request failed');return r.status==204?null:r.json()}
+async function load(){
+  const fac=await api('/api/factors');$('#cat').innerHTML=Object.entries(fac).map(([k,v])=>`<option value="${k}">${v.label} (${v.unit})</option>`).join('');
+  const s=await api('/api/summary');
+  const mx=Math.max(1,...s.by_category.map(c=>c.co2e_kg));
+  $('#cats').innerHTML=s.by_category.map(c=>`<div>${fac[c.key].label}: ${c.co2e_kg.toLocaleString()} kg (${(c.share*100).toFixed(1)}%)<div class="bar" style="width:${c.co2e_kg/mx*100}%"></div></div>`).join('')||'No data yet. Add an entry or run python -m app.seed';
+  const m=s.by_month,top=Math.max(1,...m.map(x=>x.co2e_kg));
+  $('#trend').innerHTML=m.map((x,i)=>{const w=600/Math.max(1,m.length),h=x.co2e_kg/top*130;return `<rect x="${i*w+4}" y="${140-h}" width="${w-8}" height="${h}" fill="#1f4e4a"/><text x="${i*w+w/2}" y="156" font-size="9" text-anchor="middle">${x.key.slice(5)}</text>`}).join('');
+  const month=new Date().toISOString().slice(0,7);
+  const g=await api('/api/goals/progress?month='+month);
+  $('#goals').innerHTML=g.map(x=>`<div class="${x.status==='over'?'over':x.status==='watch'?'watch':''}">${x.branch}: ${x.actual_kg} / ${x.target_kg} kg (${x.used_pct}%)</div>`).join('')||'No goals set for '+month+' (PUT /api/goals).';
+  const e=await api('/api/entries');
+  $('#rows').innerHTML='<tr><th>Date</th><th>Branch</th><th>Category</th><th>Qty</th><th>kg CO2e</th></tr>'+e.slice(0,15).map(x=>`<tr><td>${x.day}</td><td>${x.branch}</td><td>${x.category}</td><td>${x.quantity} ${x.unit}</td><td>${x.co2e_kg}</td></tr>`).join('');
+}
+$('#f').addEventListener('submit',async ev=>{ev.preventDefault();const d=Object.fromEntries(new FormData(ev.target));d.quantity=parseFloat(d.quantity);
+  try{await api('/api/entries',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)});$('#msg').textContent='Saved.';load()}catch(err){$('#msg').textContent=err.message}});
+load();
+</script></body></html>
